@@ -1,8 +1,3 @@
-	// Set to true when the creative has finished loading.
-	// If it is still false when we try to log a playlog, it will not be logged,
-	// as it was not a valid play since the media had not loaded properly.
-	var loadedProperly = false;
-
 	// Keeps track of the ad currently playing for playlog purposes.
 	var adToPlay;
 
@@ -10,7 +5,6 @@
 	var adsQueue = [];
 	var currentlyRequestingAd = false;
 	var currentlyPlaying = false;
-	var currentlyPlayingFallback = false;
 
 	// Indicates if the app is running as a Chrome OS app
 	var chromeAppMode = false;
@@ -39,18 +33,9 @@
 	// UUID of the screen this app controls. Refer to the Ad Server to obtain it.
 	var screenUUID;
 
-	var multiscreenMode;
-	var multiscreenUUIDs;
-
-	// Controls whether to play the ad (start video, count impressions, etc) as soon as the file is ready, or wait for the runtime to call the play() function
-	var autoPlay;
-
 	// Controls whether to play the creative from local content folder or download the file from url
 	var offlineOnly;
 	var contentFolderName;
-
-	// Format of the file that contains the player'd ID. Can be 'xml' (location.xml) or 'js' (screenid.js)
-	var locationFileFormat;
 
 	// ----------------------------------------------
 	//    End of settings
@@ -66,14 +51,7 @@
 		logPlay();
 	}
 
-	// Called by Player when if it needs to pause the ad (interrupts for example). You can call 'pause()' in the browser's javascript console to test this behavior.
-	function pause() 
-	{
-		$('#myVideo')[0].pause();
-		debugWrite('The ad is paused.');
-	}
-
-	function spotOver() 
+	function spotOver()
 	{
 		debugWrite("Done playing this ad");
 		currentlyPlaying = false;
@@ -84,10 +62,7 @@
 	function mediaFinishedLoading()
 	{
 		debugWrite('Finished loading ' + this.src);
-		loadedProperly = true;
-		if (autoPlay == true) {
-			play();
-		}
+		play();
 	}
 
 	// Helper debug function
@@ -158,45 +133,21 @@
 	// Called when Player orders the ad to play. Will record a playlog only if the creative has been loaded properly.
 	function logPlay()
 	{
-		if (adToPlay != null && currentlyPlayingFallback == false)
+		if (adToPlay != null && adToPlay.isFallback == false)
 		{
-			if (loadedProperly == true)
+			$.ajax(
 			{
-				var reportUrls = []
-
-				if (multiscreenMode)
+				method: "GET",
+				url: adToPlay.reportUrl,
+				success: function(data)
 				{
-				    multiscreenUUIDs.forEach(function(x)
-					{
-                        reportUrls.push(adToPlay.reportUrl.replace('[unit_id]', x))
-                    })
+					debugWrite('Logged a playlog for ' + adToPlay.creative_url);
+				},
+				error: function(data)
+				{
+					debugWrite('Failed to log a playlog for ' + adToPlay.creative_url + ". Error: " + data.status + " - " + data.statusText + '(' + data.responseText + ')');
 				}
-				else
-				{
-				    reportUrls.push(adToPlay.reportUrl)
-				}
-
-                reportUrls.forEach(function(reportUrl)
-				{
-					$.ajax(
-					{
-						method: "GET",
-						url: reportUrl,
-						success: function(data)
-						{
-							debugWrite('Logged a playlog for ' + adToPlay.creative_url);
-						},
-						error: function(data)
-						{
-							debugWrite('FAILED to log a playlog for ' + adToPlay.creative_url + ". Error: " + data.status + " - " + data.statusText + '(' + data.responseText + ')');
-						}
-					})
-				});
-			}
-			else
-			{
-				debugWrite('Tried to log a playlog for an ad that did not load properly: ' + adToPlay.creative_url);
-			}
+			})
 		}
 		else
 		{
@@ -271,12 +222,8 @@
 			fallbackCreativeUrl = loadLocalData("fallbackCreativeUrl");
 			fallbackDurationSeconds = parseFloat(loadLocalData("fallbackDurationSeconds"));
 
-			multiscreenMode = false;
-			multiscreenUUIDs = [];
-
-			autoPlay = true;
 			offlineOnly = false;
-			contentFolderName = ""
+			contentFolderName = "";
 			locationFileFormat = "js";
 
 			// Fill the settings screen with the loaded values
@@ -297,8 +244,8 @@
 			var vid = $('#myVideo');
 			img.on('load', mediaFinishedLoading);
 	        vid.on('canplay', mediaFinishedLoading);
-			img.on('error', function() { skipSpot(2); });
-			vid.on('error', function() { skipSpot(2); });
+			img.on('error', function() { skipSpot(); });
+			vid.on('error', function() { skipSpot(); });
 
 			if (screenUUID == null)
 			{
@@ -311,51 +258,17 @@
 		}
 	}
 
-	// Loads the Screen UUID from the xml file
+	// Loads the Screen UUID from the screenid.js file
 	function loadLocationFile()
 	{
-	    if (locationFileFormat == 'xml') {
-            $.ajax(
-                {
-                    url: "formal_location.xml",
-                    success: afterLoadLocationFile,
-                    dataType: "text",
-                    error: function (data) {
-                        document.title = 'skip:Error loading location file';
-                        debugWrite('Error loading location file: ' + data.statusText);
-                    }
-                });
-        }
-        else if (locationFileFormat == 'js')
-		{
-            var head = document.getElementsByTagName('head')[0];
-            var script = document.createElement('script');
+		var head = document.getElementsByTagName('head')[0];
+		var script = document.createElement('script');
 
-            script.type = 'text/javascript';
-            script.src = "screenid.js";
-            script.onload = initPlay;
+		script.type = 'text/javascript';
+		script.src = "screenid.js";
+		script.onload = initPlay;
 
-            head.appendChild(script);
-		}
-		else
-		{
-            debugWrite('Invalid locationFileFormat');
-		}
-	}
-
-	// Parses the Screen UUID from the loaded xml file
-	function afterLoadLocationFile(xmlString)
-	{
-		screenUUID = xmlString.match(/<FaceID>(.*)<\/FaceID>/)[1];
-		if (screenUUID == null)
-		{
-			debugWrite('Error reading screen data from Location File');
-		}
-		else
-		{
-			debugWrite('Screen UUID: ' + screenUUID);
-		}
-		initPlay();
+		head.appendChild(script);
 	}
 
 	function requestAd()
@@ -364,22 +277,11 @@
 		{
 			debugWrite('Requesting an ad.');
 			currentlyRequestingAd = true;
-			var scheduleUrl = hivestackUrl + '/units/' + screenUUID + '/schedulevast';
-	        var postData = {};
-	        var method = "GET";
-
-	        if (multiscreenMode)
-	        {
-	            postData['unit_uuids'] = multiscreenUUIDs;
-	            scheduleUrl = hivestackUrl + '/units/' + multiscreenUUIDs[0] + '/schedulevast';
-	            method = "POST";
-	        }
 
 			$.ajax(
 			{
-				method: method,
-				url: scheduleUrl,
-				data: JSON.stringify(postData),
+				method: "GET",
+				url: hivestackUrl + '/units/' + screenUUID + '/schedulevast',
 				success: function(data)
 				{
 					currentlyRequestingAd = false;
@@ -391,27 +293,27 @@
 						    data = $.parseXML(data)
 						}
 					    
-				        impressionNode = data.getElementsByTagName("Impression")
-                        mediafileNode = data.getElementsByTagName("MediaFile")
-                        durationNode = data.getElementsByTagName("Duration")
+				        impressionNode = data.getElementsByTagName("Impression");
+                        mediafileNode = data.getElementsByTagName("MediaFile");
+                        durationNode = data.getElementsByTagName("Duration");
 						if (impressionNode.length == 0 || mediafileNode.length == 0 || durationNode.length == 0)
 						{
-                            debugWrite('Ad Server replied that there was nothing to play.');
-                            skipSpot(3);
+                            debugWrite('Improperly formatted ad server response. Skipping spot.');
+                            skipSpot();
                             return;
 						}
 
-                        reportUrl = impressionNode[0].childNodes[1].nodeValue.trim()
-                        creativeCompleteUrl = mediafileNode[0].childNodes[1].nodeValue.trim()
-                        format = mediafileNode[0].getAttributeNode('type').nodeValue.trim()
+                        reportUrl = impressionNode[0].childNodes[1].nodeValue.trim();
+                        creativeCompleteUrl = mediafileNode[0].childNodes[1].nodeValue.trim();
+                        format = mediafileNode[0].getAttributeNode('type').nodeValue.trim();
                         durationString = durationNode[0].childNodes[0].nodeValue.trim().split(':');
                         duration = durationString[0] * 3600 + durationString[1] * 60 + durationString[2] * 1;
 
 						if (offlineOnly)
 						{
-							var creativeName = data.creative_url.substring(data.creative_url.lastIndexOf('.net') + 5, data.creative_url.lastIndexOf('/'))
-							var creativeExtension =  data.creative_url.substring(data.creative_url.lastIndexOf('.'))
-							creativeCompleteUrl = getOfflineCreative(creativeName + creativeExtension)
+							var creativeName = data.creative_url.substring(data.creative_url.lastIndexOf('.net') + 5, data.creative_url.lastIndexOf('/'));
+							var creativeExtension =  data.creative_url.substring(data.creative_url.lastIndexOf('.'));
+							creativeCompleteUrl = getOfflineCreative(creativeName + creativeExtension);
 							debugWrite(creativeCompleteUrl)
 						}
 
@@ -422,10 +324,10 @@
 	                        reportUrl: reportUrl,
 	                        duration: duration,
 	                        isFallback: false
-						}
+						};
 
 						debugWrite('Successfully received an ad from Hivestack');
-						adsQueue.push(spotFormatted)
+						adsQueue.push(spotFormatted);
 						if (currentlyPlaying == false)
 						{
 							playSpot();
@@ -434,16 +336,14 @@
 					else
 					{
 						debugWrite('Tried to refresh but Hivestack said there was nothing to play.');
-						skipSpot(3);
-						return;
+						skipSpot();
 					}
 				},
 				error: function(data)
 				{
 					currentlyRequestingAd = false;
-					document.title = 'skip:Error loading schedule from Hivestack';
 					debugWrite('Error loading schedule from Hivestack. Error: ' + data.status + " - " + data.statusText + '(' + data.responseText + ')');
-					skipSpot(4);
+					skipSpot();
 				}
 			});
 		}
@@ -464,8 +364,6 @@
             {
                 currentlyPlaying = true;
                 adToPlay = adsQueue.splice(0, 1)[0];
-                currentlyPlayingFallback = adToPlay.isFallback;
-                document.title = 'play';
                 prepareFileForPlay(adToPlay.creative_url, adToPlay.format);
             }
             else
@@ -478,14 +376,8 @@
 	}
 
 	// Either plays a fallback image or orders the player to skip it this ad altogether
-	function skipSpot(code)
+	function skipSpot()
 	{
-	    // code 1 means we got a load error upon loading the fallback. Dont re-attempt.
-		if(code == 1)
-		{
-			return;
-		}
-
 		var spotFormatted =
 		{
 			creative_url: fallbackCreativeUrl,
@@ -550,7 +442,7 @@
 
 function loadImage(img, vid, filename)
 {	
-	// For now, Chrome App mode doesn't support external images. When asked to play an image, play the fallback
+	// Chrome Apps require a workaround to load external images
 	if (chromeAppMode == true)
 	{
         var xhr = new XMLHttpRequest();
@@ -576,24 +468,6 @@ function loadImage(img, vid, filename)
 		img.css('display', 'inline');
 		vid.css('display', 'none');
 	}
-}
-
-// Format a javascript data to an ISO 8601 date
-function formatLocalDate(now) {
-	var tzo = -now.getTimezoneOffset(),
-		dif = tzo >= 0 ? '+' : '-',
-		pad = function(num) {
-			var norm = Math.abs(Math.floor(num));
-			return (norm < 10 ? '0' : '') + norm;
-		};
-	return now.getFullYear()
-		+ '-' + pad(now.getMonth()+1)
-		+ '-' + pad(now.getDate())
-		+ 'T' + pad(now.getHours())
-		+ ':' + pad(now.getMinutes())
-		+ ':' + pad(now.getSeconds())
-		+ dif + pad(tzo / 60)
-		+ ':' + pad(tzo % 60);
 }
 
 function getOfflineCreative(creativeNameWithExtension)
