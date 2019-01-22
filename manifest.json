@@ -1,0 +1,17 @@
+{
+  "manifest_version": 2,
+  "name": "Hivestack Ad Server Client",
+  "version": "0.4",
+  "minimum_chrome_version": "23",
+  "icons": {
+    "16": "hivestack-logo16.png",
+    "32": "hivestack-logo32.png",
+    "128": "hivestack-logo128.png"
+  },
+  "app": {
+    "background": {
+      "scripts": ["main.js"]
+    }
+  },
+  "permissions": ["<all_urls>", "fullscreen", "storage"]
+}
