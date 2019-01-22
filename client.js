@@ -298,7 +298,7 @@
                         durationNode = data.getElementsByTagName("Duration");
 						if (impressionNode.length == 0 || mediafileNode.length == 0 || durationNode.length == 0)
 						{
-                            debugWrite('Improperly formatted ad server response. Skipping spot.');
+                            debugWrite('Ad Server replied that there was nothing to play.');
                             skipSpot();
                             return;
 						}
@@ -335,7 +335,7 @@
 					}
 					else
 					{
-						debugWrite('Tried to refresh but Hivestack said there was nothing to play.');
+                        debugWrite('Ad Server replied that there was nothing to play.');
 						skipSpot();
 					}
 				},
