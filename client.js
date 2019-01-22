@@ -7,15 +7,20 @@
 	var adToPlay;
 
 	// Manage the queue of upcoming plays
-	var adsQueue = []
+	var adsQueue = [];
 	var currentlyRequestingAd = false;
 	var currentlyPlaying = false;
 	var currentlyPlayingFallback = false;
 
 	// Indicates if the app is running as a Chrome OS app
-	var chromeAppMode = true;
+	var chromeAppMode = false;
+	if (chrome.storage)
+	{
+		chromeAppMode = true;
+	}
+
 	// Chrome local storage is async. Load it all at app start and then work with this in-memory object.
-	var chromeAppLocalStorageObject = {}
+	var chromeAppLocalStorageObject = {};
 
 	// ----------------------------------------------
 	//    Settings initialized from local storage
@@ -56,7 +61,7 @@
 	function play() 
 	{
 		$('#myVideo')[0].play();
-		setTimeout(spotOver, adToPlay.duration * 1000)
+		setTimeout(spotOver, adToPlay.duration * 1000);
 		debugWrite('The ad is playing for ' + adToPlay.duration + ' seconds.');
 		logPlay();
 	}
@@ -71,13 +76,14 @@
 	function spotOver() 
 	{
 		debugWrite("Done playing this ad");
+		currentlyPlaying = false;
 		playSpot();
 	}
 
 	// Called when the image / video has finished loading.  We assume that the ad has played if the creative has been loaded properly
 	function mediaFinishedLoading()
 	{
-		debugWrite('finished loading ' + this.src)
+		debugWrite('Finished loading ' + this.src);
 		loadedProperly = true;
 		if (autoPlay == true) {
 			play();
@@ -87,7 +93,7 @@
 	// Helper debug function
 	function debugWrite(message)
 	{
-		$('#debug-text').html($('#debug-text').html() + '<p style="margin: 2px 0px 2px 0px">' + message + '</p>');
+		$('#debug-text').html($('#debug-text').html() + '<p style="margin: 2px 0px 2px 0px">' + " - " + message + '</p>');
 		if ($('#debug-text').children().length > 30)
 		{
 			$('#debug-text').children()[1].remove()
@@ -194,13 +200,15 @@
 		}
 		else
 		{
-			debugWrite('Tried to log a playlog for a skipped ad');
+			// debugWrite('Tried to log a playlog for a skipped ad');
 		}
 	}
 
 	// Starting point, called when page is ready
 	function main()
 	{
+		setInterval(function() { $('#queueDepth').text(adsQueue.length) }, 100);
+
 		$('html').on('dblclick', function() {
 			$('#settings').show();
 		});
@@ -243,6 +251,10 @@
 		$('#settingsClear').on('click', function() {
 			clearLocalData(reloadApp);
 		});
+
+        $('#settingsClose').on('click', function() {
+            $('#settings').hide();
+        });
 
 		if (!loadLocalData("screenUUID"))
 		{
@@ -348,7 +360,7 @@
 
 	function requestAd()
 	{
-		if (adsQueue.length == 0 && currentlyRequestingAd == false)
+		if (adsQueue.length < 2 && currentlyRequestingAd == false)
 		{
 			debugWrite('Requesting an ad.');
 			currentlyRequestingAd = true;
@@ -384,7 +396,7 @@
                         durationNode = data.getElementsByTagName("Duration")
 						if (impressionNode.length == 0 || mediafileNode.length == 0 || durationNode.length == 0)
 						{
-                            debugWrite('Tried to refresh but Hivestack said there was nothing to play.');
+                            debugWrite('Ad Server replied that there was nothing to play.');
                             skipSpot(3);
                             return;
 						}
@@ -445,35 +457,34 @@
 
 	function playSpot()
 	{
-		debugWrite('Checking queue, length is ' + adsQueue.length)
-		if (adsQueue.length != 0)
+		if (currentlyPlaying == false)
 		{
-			currentlyPlaying = true;
-			adToPlay = adsQueue.splice(0, 1)[0];
-			currentlyPlayingFallback = adToPlay.isFallback;
-			document.title = 'play'
-			debugWrite('Preparing to play ' + adToPlay.creative_url);
-			prepareFileForPlay(adToPlay.creative_url, adToPlay.format);
-		}
-		else
-		{
-			// Unexpected state encountered. Try again after a small delay
-			//setTimeout(playSpot, 3000)
-		}
+            debugWrite('Checking queue, length is ' + adsQueue.length);
+            if (adsQueue.length != 0)
+            {
+                currentlyPlaying = true;
+                adToPlay = adsQueue.splice(0, 1)[0];
+                currentlyPlayingFallback = adToPlay.isFallback;
+                document.title = 'play';
+                prepareFileForPlay(adToPlay.creative_url, adToPlay.format);
+            }
+            else
+			{
+                // Unexpected state encountered. Try again after a small delay
+                debugWrite('Queue was unexpectedly empty. Will re-attempt playing once a new ad is loaded');
+                setTimeout(playSpot, 3000)
+            }
+        }
 	}
 
 	// Either plays a fallback image or orders the player to skip it this ad altogether
 	function skipSpot(code)
 	{
-	    debugWrite('Skipped a spot with code ' + code)
-
 	    // code 1 means we got a load error upon loading the fallback. Dont re-attempt.
 		if(code == 1)
 		{
 			return;
 		}
-
-		debugWrite('Hivestack gave us nothing to play, or the file was not found. Using the fallback');
 
 		var spotFormatted =
 		{
@@ -482,9 +493,9 @@
             reportUrl: null,
             duration: fallbackDurationSeconds,
             isFallback: true
-		}
+		};
 
-		adsQueue.push(spotFormatted)
+		adsQueue.push(spotFormatted);
 
 		if (currentlyPlaying == false)
 		{
@@ -542,9 +553,22 @@ function loadImage(img, vid, filename)
 	// For now, Chrome App mode doesn't support external images. When asked to play an image, play the fallback
 	if (chromeAppMode == true)
 	{
-		img.attr('src', fallbackCreativeUrl);
-		img.css('display', 'inline');
-		vid.css('display', 'none');
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', filename, true);
+        xhr.responseType = 'blob';
+        xhr.onload = function(e) {
+            img.attr('src', window.URL.createObjectURL(this.response));
+            img.css('display', 'inline');
+            vid.css('display', 'none');
+        };
+        xhr.onerror = function(e) {
+        	debugWrite("Error loading image " + filename + ". Playing fallback");
+            img.attr('src', fallbackCreativeUrl);
+            img.css('display', 'inline');
+            vid.css('display', 'none');
+		};
+
+        xhr.send();
 	}
 	else 
 	{
