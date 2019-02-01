@@ -5,6 +5,7 @@
 	var adsQueue = [];
 	var currentlyRequestingAd = false;
 	var currentlyPlaying = false;
+	var initialized = false;
 
 	// Indicates if the app is running as a Chrome OS app
 	var chromeAppMode = false;
@@ -37,6 +38,8 @@
 	var offlineOnly;
 	var contentFolderName;
 
+	var playTimerId = null;
+
 	// ----------------------------------------------
 	//    End of settings
 	// ----------------------------------------------
@@ -46,13 +49,21 @@
 	function play() 
 	{
 		$('#myVideo')[0].play();
-		setTimeout(spotOver, adToPlay.duration * 1000);
+		if (!playTimerId)
+		{
+            playTimerId = setTimeout(spotOver, adToPlay.duration * 1000);
+        }
+        else
+		{
+            debugWrite('Attempted a double play with timer ID ' + playTimerId);
+		}
 		debugWrite('The ad is playing for ' + adToPlay.duration + ' seconds.');
 		logPlay();
 	}
 
 	function spotOver()
 	{
+		playTimerId = null;
 		debugWrite("Done playing this ad");
 		currentlyPlaying = false;
 		playSpot();
@@ -273,7 +284,7 @@
 
 	function requestAd()
 	{
-		if (adsQueue.length < 2 && currentlyRequestingAd == false)
+		if (adsQueue.length < 1 && currentlyRequestingAd == false)
 		{
 			debugWrite('Requesting an ad.');
 			currentlyRequestingAd = true;
@@ -328,8 +339,9 @@
 
 						debugWrite('Successfully received an ad from Hivestack');
 						adsQueue.push(spotFormatted);
-						if (currentlyPlaying == false)
+						if (initialized == false)
 						{
+							initialized = true;
 							playSpot();
 						}
 					}
@@ -370,7 +382,7 @@
 			{
                 // Unexpected state encountered. Try again after a small delay
                 debugWrite('Queue was unexpectedly empty. Will re-attempt playing once a new ad is loaded');
-                setTimeout(playSpot, 3000)
+                //setTimeout(playSpot, 3000)
             }
         }
 	}
@@ -389,8 +401,9 @@
 
 		adsQueue.push(spotFormatted);
 
-		if (currentlyPlaying == false)
+		if (initialized == false)
 		{
+			initialized = true;
 			playSpot();
 		}
 	}
