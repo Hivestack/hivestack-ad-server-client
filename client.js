@@ -5,9 +5,11 @@
 	var adsQueue = [];
 	var currentlyRequestingAd = false;
 	var currentlyPlaying = false;
+	var currentlySendingOfflinePlaylogs = false;
 	var initialized = false;
+    var playTimerId = null;
 
-	// Indicates if the app is running as a Chrome OS app
+    // Indicates if the app is running as a Chrome OS app
 	var chromeAppMode = false;
 	if (chrome.storage)
 	{
@@ -34,19 +36,17 @@
 	// UUID of the screen this app controls. Refer to the Ad Server to obtain it.
 	var screenUUID;
 
-	// Controls whether to play the creative from local content folder or download the file from url
-	var offlineOnly;
-	var contentFolderName;
-
-	var playTimerId = null;
+	var offlineCreativesCache = {};
+	var lastCreativesPlayed = [];
+	var offlinePreviousCreativesToKeep = 10;
+	var offlinePlaylogs = [];
+	var currentCacheIndex = 0;
 
 	// ----------------------------------------------
 	//    End of settings
 	// ----------------------------------------------
 
-	// Can also be called by Player when it is time to play the ad. You can call 'play()' in the browser's javascript console to test this behavior.
-	// the call to logPlay() can also be done separately by the player, if it can confirm that the creative has done playing
-	function play() 
+	function play()
 	{
 		$('#myVideo')[0].play();
 		if (!playTimerId)
@@ -64,7 +64,7 @@
 	function spotOver()
 	{
 		playTimerId = null;
-		debugWrite("Done playing this ad");
+		//debugWrite("Done playing this ad");
 		currentlyPlaying = false;
 		playSpot();
 	}
@@ -72,7 +72,7 @@
 	// Called when the image / video has finished loading.  We assume that the ad has played if the creative has been loaded properly
 	function mediaFinishedLoading()
 	{
-		debugWrite('Finished loading ' + this.src);
+		//debugWrite('Finished loading ' + this.src);
 		play();
 	}
 
@@ -146,19 +146,35 @@
 	{
 		if (adToPlay != null && adToPlay.isFallback == false)
 		{
-			$.ajax(
+			if (adToPlay.isOffline == false)
 			{
-				method: "GET",
-				url: adToPlay.reportUrl,
-				success: function(data)
+				$.ajax(
 				{
-					debugWrite('Logged a playlog for ' + adToPlay.creative_url);
-				},
-				error: function(data)
-				{
-					debugWrite('Failed to log a playlog for ' + adToPlay.creative_url + ". Error: " + data.status + " - " + data.statusText + '(' + data.responseText + ')');
-				}
-			})
+					method: "GET",
+					url: adToPlay.reportUrl,
+					success: function(data)
+					{
+						debugWrite('Logged a playlog for ' + adToPlay.creativeUrl);
+					},
+					error: function(data)
+					{
+						debugWrite('Failed to log a playlog for ' + adToPlay.creativeUrl + ". Error: " + data.status + " - " + data.statusText + '(' + data.responseText + ')');
+					}
+				})
+            }
+            else
+			{
+				reportUrlSplit = adToPlay.reportUrl.split('/');
+				playUUID = reportUrlSplit[reportUrlSplit.length - 1];
+				offlinePlaylogs.push({
+					'playedAtUtc': formatLocalDate(new Date()),
+					'playUUID': playUUID,
+					'creativeUrl': adToPlay.creativeUrl,
+					'screenUUID': screenUUID
+				});
+                saveOfflinePlaylogsData();
+                setTimeout(refreshUI, 300);
+			}
 		}
 		else
 		{
@@ -169,13 +185,22 @@
 	// Starting point, called when page is ready
 	function main()
 	{
+		if (!fileSystem)
+		{
+			debugWrite("File system not ready.");
+			setTimeout(main, 200);
+			return;
+		}
 		setInterval(function() { $('#queueDepth').text(adsQueue.length) }, 100);
+		refreshUI();
+        setInterval(refreshUI, 5000);
 
 		$('html').on('dblclick', function() {
 			$('#settings').show();
 		});
 
-		$('#settingsSave').on('click', function() {
+		$('#settingsSave').on('click', function()
+		{
 			if (!$('#adServerUrl').val() || !$('#screenUUID').val() || !$('#fallbackDurationSeconds').val())
 			{
 				$('#settingsError').show();
@@ -191,7 +216,8 @@
 							"screenUUID": $('#screenUUID').val(),
 							"useFallback": "true",
 							"fallbackCreativeUrl": "hivestack-fallback-logo.png",
-							"fallbackDurationSeconds": $('#fallbackDurationSeconds').val()
+							"fallbackDurationSeconds": $('#fallbackDurationSeconds').val(),
+                            "offlinePreviousCreativesToKeep": $('#offlinePreviousCreativesToKeep').val()
 						}, reloadApp);
 				}
 				else
@@ -203,6 +229,7 @@
 					saveLocalDataHtml("useFallback", "true");
 					saveLocalDataHtml("fallbackCreativeUrl", "hivestack-fallback-logo.png");
 					saveLocalDataHtml("fallbackDurationSeconds", $('#fallbackDurationSeconds').val());
+                    saveLocalDataHtml("offlinePreviousCreativesToKeep", $('#offlinePreviousCreativesToKeep').val());
 					
 					reloadApp();
 				}
@@ -216,6 +243,27 @@
 
         $('#settingsClose').on('click', function() {
             $('#settings').hide();
+        });
+
+        $('#listCache').on('click', function() {
+            listAllFiles();
+        });
+
+        $('#purgeCache').on('click', function() {
+            offlineCreativesCache = {};
+            lastCreativesPlayed = [];
+            saveOfflineCreativeData();
+            purgeAllFiles();
+            setTimeout(refreshUI, 300);
+        });
+
+        $('#purgeOfflinePlaylogs').on('click', function() {
+        	purgeOfflinePlaylogs();
+        });
+
+        $('#sendOfflinePlaylogs').on('click', function() {
+            debugWrite('Attempting to report ' + offlinePlaylogs.length + ' offline playlogs');
+            sendOfflinePlaylogs();
         });
 
 		if (!loadLocalData("screenUUID"))
@@ -232,15 +280,31 @@
 			useFallback = loadLocalData("useFallback") == 'true';
 			fallbackCreativeUrl = loadLocalData("fallbackCreativeUrl");
 			fallbackDurationSeconds = parseFloat(loadLocalData("fallbackDurationSeconds"));
+			offlinePreviousCreativesToKeep = parseInt(loadLocalData("offlinePreviousCreativesToKeep"));
 
-			offlineOnly = false;
-			contentFolderName = "";
+			offlineCreativesCacheString = loadLocalData('offlineCreativesCache');
+			if (offlineCreativesCacheString)
+			{
+                offlineCreativesCache = JSON.parse(offlineCreativesCacheString);
+			}
+            lastCreativesPlayedString = loadLocalData('lastCreativesPlayed');
+            if (lastCreativesPlayedString)
+            {
+                lastCreativesPlayed = JSON.parse(lastCreativesPlayedString);
+            }
+            offlinePlaylogsString = loadLocalData('offlinePlaylogs');
+            if (offlinePlaylogsString)
+            {
+                offlinePlaylogs = JSON.parse(offlinePlaylogsString);
+            }
+
 			locationFileFormat = "js";
 
 			// Fill the settings screen with the loaded values
 			$('#adServerUrl').val(hivestackUrl);
 			$('#screenUUID').val(screenUUID);
 			$('#fallbackDurationSeconds').val(fallbackDurationSeconds);
+            $('#offlinePreviousCreativesToKeep').val(offlinePreviousCreativesToKeep);
 			$('#DEBUG_ShowDiagnostics').prop('checked', DEBUG_ShowDiagnostics);
 
 			hivestackUrl = hivestackUrl + "/nirvana/api/v1";
@@ -257,6 +321,8 @@
 	        vid.on('canplay', mediaFinishedLoading);
 			img.on('error', function() { skipSpot(); });
 			vid.on('error', function() { skipSpot(); });
+
+			refreshUI();
 
 			if (screenUUID == null)
 			{
@@ -286,7 +352,6 @@
 	{
 		if (adsQueue.length < 1 && currentlyRequestingAd == false)
 		{
-			debugWrite('Requesting an ad.');
 			currentlyRequestingAd = true;
 
 			$.ajax(
@@ -295,6 +360,9 @@
 				url: hivestackUrl + '/units/' + screenUUID + '/schedulevast',
 				success: function(data)
 				{
+					// Online connectivity confirmed. Send offline playlogs if needed
+                    sendOfflinePlaylogs();
+
 					currentlyRequestingAd = false;
 
 					if (data != null)
@@ -320,25 +388,29 @@
                         durationString = durationNode[0].childNodes[0].nodeValue.trim().split(':');
                         duration = durationString[0] * 3600 + durationString[1] * 60 + durationString[2] * 1;
 
-						if (offlineOnly)
-						{
-							var creativeName = data.creative_url.substring(data.creative_url.lastIndexOf('.net') + 5, data.creative_url.lastIndexOf('/'));
-							var creativeExtension =  data.creative_url.substring(data.creative_url.lastIndexOf('.'));
-							creativeCompleteUrl = getOfflineCreative(creativeName + creativeExtension);
-							debugWrite(creativeCompleteUrl)
-						}
-
 						var spotFormatted =
 						{
-							creative_url: creativeCompleteUrl,
+							creativeUrl: creativeCompleteUrl,
 							format: format,
 	                        reportUrl: reportUrl,
 	                        duration: duration,
-	                        isFallback: false
+	                        isFallback: false,
+							isOffline: false
 						};
 
-						debugWrite('Successfully received an ad from Hivestack');
-						adsQueue.push(spotFormatted);
+                        debugWrite('Successfully received an ad from Hivestack');
+                        adsQueue.push(spotFormatted);
+
+						offlineCreativesCache[creativeCompleteUrl] = spotFormatted;
+
+						lastCreativesPlayed.push(creativeCompleteUrl);
+						if (lastCreativesPlayed.length > offlinePreviousCreativesToKeep)
+						{
+							lastCreativesPlayed.shift()
+						}
+
+						saveOfflineCreativeData();
+
 						if (initialized == false)
 						{
 							initialized = true;
@@ -354,8 +426,8 @@
 				error: function(data)
 				{
 					currentlyRequestingAd = false;
-					debugWrite('Error loading schedule from Hivestack. Error: ' + data.status + " - " + data.statusText + '(' + data.responseText + ')');
-					skipSpot();
+					debugWrite('Error requesting an ad from Hivestack. Will play offline. Error: ' + data.status + " - " + data.statusText + '(' + data.responseText + ')');
+                    playOfflineSpotFromCache();
 				}
 			});
 		}
@@ -371,12 +443,12 @@
 	{
 		if (currentlyPlaying == false)
 		{
-            debugWrite('Checking queue, length is ' + adsQueue.length);
+            // debugWrite('Checking queue, length is ' + adsQueue.length);
             if (adsQueue.length != 0)
             {
                 currentlyPlaying = true;
                 adToPlay = adsQueue.splice(0, 1)[0];
-                prepareFileForPlay(adToPlay.creative_url, adToPlay.format);
+                prepareFileForPlay(adToPlay.creativeUrl, adToPlay.format);
             }
             else
 			{
@@ -390,16 +462,17 @@
 	// Either plays a fallback image or orders the player to skip it this ad altogether
 	function skipSpot()
 	{
-		var spotFormatted =
+		var fallbackSpot =
 		{
-			creative_url: fallbackCreativeUrl,
+			creativeUrl: fallbackCreativeUrl,
 			format: null,
             reportUrl: null,
             duration: fallbackDurationSeconds,
-            isFallback: true
+            isFallback: true,
+			isOffline: true
 		};
 
-		adsQueue.push(spotFormatted);
+		adsQueue.push(fallbackSpot);
 
 		if (initialized == false)
 		{
@@ -408,7 +481,43 @@
 		}
 	}
 
-	// Setups a creative based on its mimetype or extension
+    function playOfflineSpotFromCache()
+    {
+    	creativeToPlay = lastCreativesPlayed[currentCacheIndex % lastCreativesPlayed.length];
+        currentCacheIndex++;
+
+        if (!creativeToPlay)
+		{
+			skipSpot();
+			return;
+		}
+		cachedCreativeMetadata = offlineCreativesCache[creativeToPlay];
+    	if (!cachedCreativeMetadata)
+		{
+			skipSpot();
+			return;
+		}
+
+        var offlineSpot =
+		{
+			creativeUrl: cachedCreativeMetadata.creativeUrl,
+			format: cachedCreativeMetadata.format,
+			reportUrl: cachedCreativeMetadata.reportUrl,
+			duration: cachedCreativeMetadata.duration,
+			isFallback: false,
+			isOffline: true
+		};
+
+        adsQueue.push(offlineSpot);
+
+        if (initialized == false)
+        {
+            initialized = true;
+            playSpot();
+        }
+    }
+
+    // Setups a creative based on its mimetype or extension
 	function prepareFileForPlay(filename, mimetype) {
 		var creativeExtension;
 
@@ -434,7 +543,7 @@
 			case 'gif':
 			case 'bmp':
 			case 'svg':
-				loadImage(img, vid, filename);
+				loadCreative(img, vid, filename);
 				break;
 
 			case 'mp4':
@@ -442,53 +551,203 @@
 			case 'webm':
 			case 'avi':
 			case 'wmv':
-				vid.attr('src', filename);
-				vid.css('display', 'inline');
-				img.css('display', 'none');
+                loadCreative(vid, img, filename);
 				break;
 			default:
 				//No extension: assume it's an image
-				loadImage(img, vid, filename);
+				loadCreative(img, vid, filename);
 				break;
 		}
 	}
 
-function loadImage(img, vid, filename)
+function loadCreative(elemToUse, elemToHide, filename)
 {	
 	// Chrome Apps require a workaround to load external images
 	if (chromeAppMode == true)
 	{
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', filename, true);
-        xhr.responseType = 'blob';
-        xhr.onload = function(e) {
-            img.attr('src', window.URL.createObjectURL(this.response));
-            img.css('display', 'inline');
-            vid.css('display', 'none');
-        };
-        xhr.onerror = function(e) {
-        	debugWrite("Error loading image " + filename + ". Playing fallback");
-            img.attr('src', fallbackCreativeUrl);
-            img.css('display', 'inline');
-            vid.css('display', 'none');
-		};
+		filenameForStorage = getFilenameForStorage(filename);
+		if (filename == fallbackCreativeUrl) {
+            elemToUse.attr('src', fallbackCreativeUrl);
+            elemToUse.css('display', 'inline');
+            elemToHide.css('display', 'none');
+		}
+		else {
+            // Check if we have the file available locally
+            //debugWrite('Loading creative ' + filename);
+            readIfFileExists(filenameForStorage, function (localFileUrl) {
+                debugWrite('Playing creative from cache');
+                elemToUse.attr('src', localFileUrl);
+                elemToUse.css('display', 'inline');
+                elemToHide.css('display', 'none');
+            }, function () {
+                debugWrite('First time playing creative. Downloading and caching');
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', filename, true);
+                xhr.responseType = 'blob';
+                xhr.onload = function (e) {
+                    debugWrite('Downloaded creative');
+                    saveToFile(filenameForStorage, this.response, function() {
+                    	debugWrite('Successfully saved file ' + filename + ' to the cache as ' + filenameForStorage)
+					});
+                    elemToUse.attr('src', window.URL.createObjectURL(this.response));
+                    elemToUse.css('display', 'inline');
+                    elemToHide.css('display', 'none');
+                };
+                xhr.onerror = function (e) {
+                    debugWrite("Error loading creative " + filename + ". Playing fallback");
+                    elemToUse.attr('src', fallbackCreativeUrl);
+                    elemToUse.css('display', 'inline');
+                    elemToHide.css('display', 'none');
+                };
 
-        xhr.send();
+                xhr.send();
+            });
+        }
 	}
 	else 
 	{
-		img.attr('src', filename);
-		img.css('display', 'inline');
-		vid.css('display', 'none');
+		elemToUse.attr('src', filename);
+		elemToUse.css('display', 'inline');
+		elemToHide.css('display', 'none');
 	}
 }
 
-function getOfflineCreative(creativeNameWithExtension)
+function getFilenameForStorage(filename)
 {
-	var loc = window.location.pathname;
-	var currentDirectory = loc.substring(0, loc.lastIndexOf('/'));
-	return 'file://' + currentDirectory + '/'+ contentFolderName + '/' + creativeNameWithExtension
+	return filename.split('/').join('').split(':').join('');
 }
+
+// Formats a javascript data to an ISO 8601 date
+function formatLocalDate(now)
+{
+	var tzo = -now.getTimezoneOffset();
+	var dif = tzo >= 0 ? '+' : '-';
+	var pad = function(num)
+	{
+		var norm = Math.abs(Math.floor(num));
+		return (norm < 10 ? '0' : '') + norm;
+	};
+
+	return now.getFullYear()
+		+ '-' + pad(now.getMonth()+1)
+		+ '-' + pad(now.getDate())
+		+ 'T' + pad(now.getHours())
+		+ ':' + pad(now.getMinutes())
+		+ ':' + pad(now.getSeconds())
+		+ dif + pad(tzo / 60)
+		+ ':' + pad(tzo % 60);
+}
+
+function saveToDisk(filename, bytes)
+{
+    chrome.fileSystem.getWritableEntry(chosenFileEntry, function(writableFileEntry) {
+        writableFileEntry.createWriter(function(writer) {
+            writer.onerror = function() { debugWrite('Error saving file ' + filename) };
+            writer.onwriteend = function() { debugWrite('Done saving file ' + filename) };
+
+            chosenFileEntry.file(function(file) {
+                writer.write(file);
+            });
+        }, errorHandler);
+    });
+}
+
+function refreshUI()
+{
+    getFilesCount(function(filesCount) {
+        $('#cachedFilesCount').text(filesCount);
+    });
+
+	queryRemainingSpace(function(current, maxAllowed) {
+        $('#cacheMbUsage').text(current);
+        $('#cacheMbMax').text(maxAllowed);
+	});
+
+    $('#offlinePlaylogsCount').text(offlinePlaylogs.length);
+}
+
+function saveOfflineCreativeData()
+{
+    offlineCreativesCacheStringified = JSON.stringify(offlineCreativesCache);
+    lastCreativesPlayedStringified = JSON.stringify(lastCreativesPlayed);
+
+    if (chromeAppMode == true)
+    {
+        saveLocalDataChrome(
+            {
+                "offlineCreativesCache": offlineCreativesCacheStringified,
+                "lastCreativesPlayed": lastCreativesPlayedStringified
+            });
+    }
+    else
+    {
+        saveLocalDataHtml("offlineCreativesCache", offlineCreativesCacheStringified);
+        saveLocalDataHtml("lastCreativesPlayed", lastCreativesPlayedStringified);
+    }
+}
+
+function saveOfflinePlaylogsData()
+{
+	offlinePlaylogsStringified = JSON.stringify(offlinePlaylogs);
+
+	if (chromeAppMode == true)
+	{
+		saveLocalDataChrome(
+			{
+				"offlinePlaylogs": offlinePlaylogsStringified
+			});
+	}
+	else
+	{
+		saveLocalDataHtml("offlinePlaylogs", offlinePlaylogsStringified);
+	}
+}
+
+function sendOfflinePlaylogs()
+{
+	// TODO implement server-side. Calls will be disabled for now.
+	return;
+
+	if (offlinePlaylogs.length == 0 || currentlySendingOfflinePlaylogs)
+	{
+		return;
+	}
+
+    debugWrite('Attempting to report ' + offlinePlaylogs.length + ' offline playlogs');
+    currentlySendingOfflinePlaylogs = true;
+
+    $.ajax(
+	{
+		method: "POST",
+        url: hivestackUrl + '/units/' + screenUUID + '/bulkreportofflineplays',
+		data: JSON.stringify(offlinePlaylogs),
+		success: function(data)
+		{
+			debugWrite('Successfully confirmed offline playlogs');
+			offlinePlaylogs = [];
+            currentlySendingOfflinePlaylogs = false;
+		},
+		error: function(data)
+		{
+			debugWrite('Failed to send Offline Playlogs. Will retry later.');
+            currentlySendingOfflinePlaylogs = false;
+		}
+	});
+
+    setTimeout(refreshUI, 300);
+    saveOfflinePlaylogsData();
+}
+
+function purgeOfflinePlaylogs()
+{
+	debugWrite('Purged ' + offlinePlaylogs.length + ' offline playlogs');
+	offlinePlaylogs = [];
+
+    setTimeout(refreshUI, 300);
+    saveOfflinePlaylogsData();
+}
+
+initFileSystem();
 
 // Starts the whole thing!
 if (chromeAppMode == true)

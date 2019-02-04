@@ -20,7 +20,7 @@
 		margin-left: 10px;
 	}
 	#settings label {
-		width: 200px;
+		width: 250px;
 		display: inline-block;
 	}
 	</style>
@@ -32,13 +32,26 @@
 		<div><label for="adServerUrl">Ad Server URL</label> <input type='text' id='adServerUrl' value="https://uat.hivestack.com" /></div>
 		<div><label for="screenUUID">Screen UUID</label> <input type='text' id='screenUUID' placeholder="f928f6eb-fa..." /></div>
 		<div><label for="fallbackDurationSeconds">Filler spot duration (seconds)</label> <input type='text' id='fallbackDurationSeconds' value="5" /></div>
+		<div><label for="offlinePreviousCreativesToKeep">When offline, repeat the last X creatives</label> <input type='text' id='offlinePreviousCreativesToKeep' value="10" /></div>
 		<div><label for="DEBUG_ShowDiagnostics">Display diagnostics info</label> <input type='checkbox' id='DEBUG_ShowDiagnostics' /></div>
 		<br>
 		<div><button id='settingsSave'>Save and restart</button> <button id='settingsClear'>Clear all settings</button></div>
 		<div id="settingsError" style="display: none;"><br><strong>Please fill all the settings</strong></div>
+		<h2>Offline Cache Usage</h2>
+		<div><span id="cachedFilesCount">0</span> files, using <span id="cacheMbUsage">0</span> MB out of <span id="cacheMbMax">0</span> MB allowed</div>
+		<br>
+		<button id='listCache'>List Files</button>
+		<button id='purgeCache'>Purge Cache</button>
+		<h2>Offline Playlogs</h2>
+		<div>There are <span id="offlinePlaylogsCount">0</span> unreported playlogs.</div>
+		<br>
+		<button id='sendOfflinePlaylogs'>Send Unreported Playlogs</button>
+		<button id='purgeOfflinePlaylogs'>Purge Unreported Playlogs</button>
+		<br>
+		<br>
+		<hr>
 		<br>
 		<button id='settingsClose'>Close without saving</button>
-		<br>
 	</div>
 
     <div class="main-container" style='display: inline-block; width: 100%; height: 100%'>
@@ -49,7 +62,8 @@
 		<img id='myImage' style='display: none; width: 100vw; height: 100vh;'/>
     </div>
 
+	<script src="filesystem.js"> </script>
 	<script src="client.js"> </script>
-	
+
 </body>
 </html>
