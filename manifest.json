@@ -13,5 +13,7 @@
       "scripts": ["main.js"]
     }
   },
+  "offline_enabled": true,
+  "kiosk_enabled": true,
   "permissions": ["<all_urls>", "fullscreen", "storage", "fileSystem", "unlimitedStorage"]
 }
