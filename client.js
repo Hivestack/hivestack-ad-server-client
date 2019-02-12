@@ -52,13 +52,13 @@
 		if (!playTimerId)
 		{
             playTimerId = setTimeout(spotOver, adToPlay.duration * 1000);
+            debugWrite('The ad is playing for ' + adToPlay.duration + ' seconds.');
+            logPlay();
         }
         else
 		{
             debugWrite('Attempted a double play with timer ID ' + playTimerId);
 		}
-		debugWrite('The ad is playing for ' + adToPlay.duration + ' seconds.');
-		logPlay();
 	}
 
 	function spotOver()
@@ -146,7 +146,7 @@
 	{
 		if (adToPlay != null && adToPlay.isFallback == false)
 		{
-			if (adToPlay.isOffline == false)
+			if (adToPlay.isOffline == false && navigator.onLine == true)
 			{
 				$.ajax(
 				{
@@ -164,13 +164,13 @@
             }
             else
 			{
-				reportUrlSplit = adToPlay.reportUrl.split('/');
+                debugWrite('Logging an offline playlog');
+                reportUrlSplit = adToPlay.reportUrl.split('/');
 				playUUID = reportUrlSplit[reportUrlSplit.length - 1];
 				offlinePlaylogs.push({
-					'playedAtUtc': formatLocalDate(new Date()),
-					'playUUID': playUUID,
-					'creativeUrl': adToPlay.creativeUrl,
-					'screenUUID': screenUUID
+					'played_at_utc': new Date().toISOString(),
+					'playlog_uuid': playUUID,
+					'creative_url': adToPlay.creativeUrl
 				});
                 saveOfflinePlaylogsData();
                 setTimeout(refreshUI, 300);
@@ -262,7 +262,6 @@
         });
 
         $('#sendOfflinePlaylogs').on('click', function() {
-            debugWrite('Attempting to report ' + offlinePlaylogs.length + ' offline playlogs');
             sendOfflinePlaylogs();
         });
 
@@ -371,7 +370,8 @@
 						{
 						    data = $.parseXML(data)
 						}
-					    
+
+						// TODO handle no-report VAST (fallback creative)
 				        impressionNode = data.getElementsByTagName("Impression");
                         mediafileNode = data.getElementsByTagName("MediaFile");
                         durationNode = data.getElementsByTagName("Duration");
@@ -617,7 +617,7 @@ function getFilenameForStorage(filename)
 	return filename.split('/').join('').split(':').join('');
 }
 
-// Formats a javascript data to an ISO 8601 date
+// Formats a javascript date to an ISO 8601 date
 function formatLocalDate(now)
 {
 	var tzo = -now.getTimezoneOffset();
@@ -705,9 +705,6 @@ function saveOfflinePlaylogsData()
 
 function sendOfflinePlaylogs()
 {
-	// TODO implement server-side. Calls will be disabled for now.
-	return;
-
 	if (offlinePlaylogs.length == 0 || currentlySendingOfflinePlaylogs)
 	{
 		return;
@@ -719,12 +716,14 @@ function sendOfflinePlaylogs()
     $.ajax(
 	{
 		method: "POST",
-        url: hivestackUrl + '/units/' + screenUUID + '/bulkreportofflineplays',
+        url: hivestackUrl + '/units/' + screenUUID + '/reportofflineplays',
 		data: JSON.stringify(offlinePlaylogs),
 		success: function(data)
 		{
-			debugWrite('Successfully confirmed offline playlogs');
+			debugWrite('Successfully confirmed ' + data['confirmed_offline_plays'] + ' offline playlogs');
 			offlinePlaylogs = [];
+            setTimeout(refreshUI, 300);
+            saveOfflinePlaylogsData();
             currentlySendingOfflinePlaylogs = false;
 		},
 		error: function(data)
@@ -733,9 +732,6 @@ function sendOfflinePlaylogs()
             currentlySendingOfflinePlaylogs = false;
 		}
 	});
-
-    setTimeout(refreshUI, 300);
-    saveOfflinePlaylogsData();
 }
 
 function purgeOfflinePlaylogs()
