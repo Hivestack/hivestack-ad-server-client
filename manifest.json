@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Hivestack Ad Server Client",
-  "version": "0.63",
+  "version": "0.64",
   "minimum_chrome_version": "23",
   "icons": {
     "16": "hivestack-logo16.png",

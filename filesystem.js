@@ -16,7 +16,6 @@ function readIfFileExists(filename, callbackFile, callbackFileDoesNotExist)
 {
     fileSystem.root.getFile(filename, {create : false}, function(fileEntry) {
         var localFileUrl = fileEntry.toURL();
-        debugWrite('File exists, its local URL is ' + localFileUrl);
         callbackFile(fileEntry.toURL())
     }, callbackFileDoesNotExist);
 }
@@ -25,13 +24,12 @@ function saveToFile(filename, dataBlob, callbackSuccess)
 {
     debugWrite("Saving data to " + filename);
     fileSystem.root.getFile(filename, {create: true, exclusive: true}, function(fileEntry) {
-        debugWrite('file ' + fileEntry.fullPath + ' has been created');
-
         // Create a FileWriter object for our FileEntry (log.txt).
         fileEntry.createWriter(function(fileWriter) {
-
             fileWriter.onwriteend = function(e) {
-                debugWrite('Write completed. Saved ' + dataBlob.size + ' bytes.');
+                if (callbackSuccess) {
+                    callbackSuccess();
+                }
             };
 
             fileWriter.onerror = function(e) {

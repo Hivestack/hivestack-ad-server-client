@@ -42,6 +42,7 @@
 	var offlinePreviousCreativesToKeep = 10;
 	var offlinePlaylogs = [];
 	var currentCacheIndex = 0;
+	var creativesBeingDownloaded = {};
 
 	// ----------------------------------------------
 	//    End of settings
@@ -200,6 +201,8 @@
             $('#clientVersion').text(json['version']);
         });
 
+		setTimeout(prefetchCreatives, 10000); // Wait 10 seconds for playback to get started and prefetch the remaining creatives
+
 		setInterval(function() { $('#queueDepth').text(adsQueue.length) }, 100);
 		refreshUI();
         setInterval(refreshUI, 5000);
@@ -254,6 +257,13 @@
             $('#settings').hide();
         });
 
+        $('#clearLogs').on('click', function() {
+            while ($('#debug-text').children().length > 1)
+            {
+                $('#debug-text').children()[1].remove()
+            }
+        });
+
         $('#listCache').on('click', function() {
             listAllFiles();
         });
@@ -264,6 +274,10 @@
             saveOfflineCreativeData();
             purgeAllFiles();
             setTimeout(refreshUI, 300);
+        });
+
+        $('#prefetchCreatives').on('click', function() {
+            prefetchCreatives();
         });
 
         $('#purgeOfflinePlaylogs').on('click', function() {
@@ -391,11 +405,11 @@
                             return;
 						}
 
-                        reportUrl = impressionNode[0].childNodes[1].nodeValue.trim();
-                        creativeCompleteUrl = mediafileNode[0].childNodes[1].nodeValue.trim();
-                        format = mediafileNode[0].getAttributeNode('type').nodeValue.trim();
-                        durationString = durationNode[0].childNodes[0].nodeValue.trim().split(':');
-                        duration = durationString[0] * 3600 + durationString[1] * 60 + durationString[2] * 1;
+                        var reportUrl = impressionNode[0].childNodes[1].nodeValue.trim();
+                        var creativeCompleteUrl = mediafileNode[0].childNodes[1].nodeValue.trim();
+                        var format = mediafileNode[0].getAttributeNode('type').nodeValue.trim();
+                        var durationString = durationNode[0].childNodes[0].nodeValue.trim().split(':');
+                        var duration = durationString[0] * 3600 + durationString[1] * 60 + durationString[2] * 1;
 
 						var spotFormatted =
 						{
@@ -410,20 +424,21 @@
                         debugWrite('Successfully received an ad from Hivestack');
                         adsQueue.push(spotFormatted);
 
-						offlineCreativesCache[creativeCompleteUrl] = spotFormatted;
-
-						lastCreativesPlayed.push(creativeCompleteUrl);
-						if (lastCreativesPlayed.length > offlinePreviousCreativesToKeep)
-						{
-							lastCreativesPlayed.shift()
-						}
-
-						saveOfflineCreativeData();
+                        downloadAndSaveCreativeToDisk(creativeCompleteUrl);
 
 						if (initialized == false)
 						{
 							initialized = true;
-							playSpot();
+							var cachedCreative = offlineCreativesCache[creativeCompleteUrl];
+							if (cachedCreative)
+							{
+                                playSpot();
+                            }
+                            else
+							{
+                                debugWrite('First play ever, nothing is cached. Waiting a few seconds for creatives to load.');
+                                setTimeout(playSpot, 3000);
+                            }
 						}
 					}
 					else
@@ -457,6 +472,20 @@
             {
                 currentlyPlaying = true;
                 adToPlay = adsQueue.splice(0, 1)[0];
+
+                if (adToPlay.creativeUrl != fallbackCreativeUrl && adToPlay.isOffline == false)
+                {
+                    offlineCreativesCache[adToPlay.creativeUrl] = adToPlay;
+
+                    lastCreativesPlayed.push(adToPlay.creativeUrl);
+                    if (lastCreativesPlayed.length > offlinePreviousCreativesToKeep)
+                    {
+                        lastCreativesPlayed.shift()
+                    }
+
+                    saveOfflineCreativeData();
+                }
+
                 prepareFileForPlay(adToPlay.creativeUrl, adToPlay.format);
             }
             else
@@ -589,27 +618,14 @@ function loadCreative(elemToUse, elemToHide, filename)
                 elemToUse.css('display', 'inline');
                 elemToHide.css('display', 'none');
             }, function () {
-                debugWrite('First time playing creative. Downloading and caching');
-                var xhr = new XMLHttpRequest();
-                xhr.open('GET', filename, true);
-                xhr.responseType = 'blob';
-                xhr.onload = function (e) {
-                    debugWrite('Downloaded creative');
-                    saveToFile(filenameForStorage, this.response, function() {
-                    	debugWrite('Successfully saved file ' + filename + ' to the cache as ' + filenameForStorage)
-					});
-                    elemToUse.attr('src', window.URL.createObjectURL(this.response));
-                    elemToUse.css('display', 'inline');
-                    elemToHide.css('display', 'none');
-                };
-                xhr.onerror = function (e) {
-                    debugWrite("Error loading creative " + filename + ". Playing fallback");
-                    elemToUse.attr('src', fallbackCreativeUrl);
-                    elemToUse.css('display', 'inline');
-                    elemToHide.css('display', 'none');
-                };
-
-                xhr.send();
+                debugWrite('Told to play a creative that was not yet downloaded. Skipping.');
+                adToPlay.duration = fallbackDurationSeconds;
+                adToPlay.isFallback = true;
+                var img = $('#myImage');
+                var vid = $('#myVideo');
+                img.attr('src', fallbackCreativeUrl);
+                img.css('display', 'inline');
+                vid.css('display', 'none');
             });
         }
 	}
@@ -621,30 +637,69 @@ function loadCreative(elemToUse, elemToHide, filename)
 	}
 }
 
+function downloadAndSaveCreativeToDisk(filename)
+{
+    var filenameForStorage = getFilenameForStorage(filename);
+    var alreadyBeingDownloadadCreative = creativesBeingDownloaded[filename];
+    if (alreadyBeingDownloadadCreative)
+	{
+		return;
+	}
+
+	// Check if we have the file available locally
+	readIfFileExists(filenameForStorage, function (localFileUrl) {
+		// File already exists, do nothing
+	}, function () {
+		debugWrite('Downloading creative ' + filename);
+		creativesBeingDownloaded[filename] = new Date();
+		var xhr = new XMLHttpRequest();
+		xhr.open('GET', filename, true);
+		xhr.responseType = 'blob';
+		xhr.onload = function (e) {
+			saveToFile(filenameForStorage, this.response, function() {
+				var timeTaken = new Date() - creativesBeingDownloaded[filename];
+				debugWrite('Successfully downloaded and saved file ' + filename + ' to the cache as ' + filenameForStorage + ' in ' + timeTaken / 1000 + 's')
+				delete creativesBeingDownloaded[filename]
+			});
+		};
+		xhr.onerror = function (e) {
+			debugWrite("Error downloading creative " + filename);
+			delete creativesBeingDownloaded[filename]
+		};
+
+		xhr.send();
+	});
+}
+
 function getFilenameForStorage(filename)
 {
 	return filename.split('/').join('').split(':').join('');
 }
 
-// Formats a javascript date to an ISO 8601 date
-function formatLocalDate(now)
+function prefetchCreatives()
 {
-	var tzo = -now.getTimezoneOffset();
-	var dif = tzo >= 0 ? '+' : '-';
-	var pad = function(num)
-	{
-		var norm = Math.abs(Math.floor(num));
-		return (norm < 10 ? '0' : '') + norm;
-	};
+	debugWrite("Prefetching creatives");
+    $.ajax(
+        {
+            method: "GET",
+            url: hivestackUrl + '/units/' + screenUUID + '/creatives',
+            success: function(data)
+            {
+                debugWrite('There are ' + data.length + ' active creatives. Downloading the missing ones.');
+                data.forEach(function(elem) {
+                    downloadAndSaveCreativeToDisk(elem['url']);
+				});
+                setTimeout(prefetchCreatives, 60 * 60 * 1000); // run again in 1 hour
 
-	return now.getFullYear()
-		+ '-' + pad(now.getMonth()+1)
-		+ '-' + pad(now.getDate())
-		+ 'T' + pad(now.getHours())
-		+ ':' + pad(now.getMinutes())
-		+ ':' + pad(now.getSeconds())
-		+ dif + pad(tzo / 60)
-		+ ':' + pad(tzo % 60);
+            },
+            error: function(data)
+            {
+                debugWrite('Failed to prefetch creatives.');
+                setTimeout(prefetchCreatives, 10 * 60 * 1000); // run again in 10 minutes
+            }
+        });
+
+    setTimeout(prefetchCreatives, 60 * 60 * 1000); // run again in 1 hour
 }
 
 function saveToDisk(filename, bytes)
@@ -673,6 +728,8 @@ function refreshUI()
 	});
 
     $('#offlinePlaylogsCount').text(offlinePlaylogs.length);
+
+    $('#onlineStatus').text(navigator.onLine ? 'Online': 'Offline')
 }
 
 function saveOfflineCreativeData()
