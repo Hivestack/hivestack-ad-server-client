@@ -8,6 +8,7 @@
 	var currentlySendingOfflinePlaylogs = false;
 	var initialized = false;
     var playTimerId = null;
+    var clientVersion = null;
 
     // Indicates if the app is running as a Chrome OS app
 	var chromeAppMode = false;
@@ -191,6 +192,14 @@
 			setTimeout(main, 200);
 			return;
 		}
+
+        $.getJSON("manifest.json", function(json) {
+            debugWrite('Client version: ' + json['version']);
+            clientVersion = json['version'];
+            $('#clientName').text(json['name']);
+            $('#clientVersion').text(json['version']);
+        });
+
 		setInterval(function() { $('#queueDepth').text(adsQueue.length) }, 100);
 		refreshUI();
         setInterval(refreshUI, 5000);
