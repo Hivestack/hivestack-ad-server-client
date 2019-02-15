@@ -10,6 +10,13 @@
     var playTimerId = null;
     var clientVersion = null;
 
+    // Double buffering
+	var currentImageElement = 0;
+	var currentVideoElement = 0;
+	var imageElements = [$('#myImage1'), $('#myImage2')];
+    var videoElements = [$('#myVideo1'), $('#myVideo2')];
+    var nextActiveElement = null;
+
     // Indicates if the app is running as a Chrome OS app
 	var chromeAppMode = false;
 	if (chrome.storage)
@@ -50,10 +57,13 @@
 
 	function play()
 	{
-		$('#myVideo')[0].play();
 		if (!playTimerId)
 		{
-            playTimerId = setTimeout(spotOver, adToPlay.duration * 1000);
+			var timeUntilPrequeue = adToPlay.duration - 1;
+			if (timeUntilPrequeue < 1) {
+                timeUntilPrequeue = 1;
+			}
+            playTimerId = setTimeout(spotOver, timeUntilPrequeue * 1000);
             debugWrite('The ad is playing for ' + adToPlay.duration + ' seconds.');
             logPlay();
         }
@@ -75,7 +85,7 @@
 	function mediaFinishedLoading()
 	{
 		//debugWrite('Finished loading ' + this.src);
-		play();
+		//play();
 	}
 
 	// Helper debug function
@@ -337,12 +347,14 @@
 				$('#debug-container').show();
 			}
 
-			var img = $('#myImage');
-			var vid = $('#myVideo');
-			img.on('load', mediaFinishedLoading);
-	        vid.on('canplay', mediaFinishedLoading);
-			img.on('error', function() { skipSpot(); });
-			vid.on('error', function() { skipSpot(); });
+			imageElements[0].on('load', mediaFinishedLoading);
+            imageElements[1].on('load', mediaFinishedLoading);
+            videoElements[0].on('canplay', mediaFinishedLoading);
+            videoElements[1].on('canplay', mediaFinishedLoading);
+            imageElements[0].on('error', function() { skipSpot(); });
+            imageElements[1].on('error', function() { skipSpot(); });
+            videoElements[0].on('error', function() { skipSpot(); });
+            videoElements[1].on('error', function() { skipSpot(); });
 
 			refreshUI();
 
@@ -487,6 +499,7 @@
                 }
 
                 prepareFileForPlay(adToPlay.creativeUrl, adToPlay.format);
+                setTimeout(bringActiveElementToFront, 1000);
             }
             else
 			{
@@ -555,6 +568,35 @@
         }
     }
 
+    function getActiveImageElement()
+	{
+		return imageElements[currentImageElement % 2];
+	}
+
+    function getActiveVideoElement()
+    {
+        return videoElements[currentVideoElement % 2];
+    }
+
+    function bringActiveElementToFront()
+	{
+		if (nextActiveElement)
+		{
+			imageElements[0].css('display', 'none');
+            imageElements[1].css('display', 'none');
+            videoElements[0].css('display', 'none');
+            videoElements[1].css('display', 'none');
+            videoElements[0][0].pause();
+            videoElements[1][0].pause();
+            nextActiveElement.css('display', 'inline');
+            if (nextActiveElement.is('video'))
+			{
+				nextActiveElement[0].play();
+			}
+			play();
+		}
+	}
+
     // Setups a creative based on its mimetype or extension
 	function prepareFileForPlay(filename, mimetype) {
 		var creativeExtension;
@@ -570,8 +612,10 @@
 			creativeExtension = splitFilename[splitFilename.length - 1].toLowerCase();
 		}
 
-		var img = $('#myImage');
-		var vid = $('#myVideo');
+		currentImageElement++;
+		currentVideoElement++;
+		var img = getActiveImageElement();
+		var vid = getActiveVideoElement();
 
 		switch (creativeExtension)
 		{
@@ -581,6 +625,7 @@
 			case 'gif':
 			case 'bmp':
 			case 'svg':
+				nextActiveElement = img;
 				loadCreative(img, vid, filename);
 				break;
 
@@ -589,10 +634,12 @@
 			case 'webm':
 			case 'avi':
 			case 'wmv':
+				nextActiveElement = vid;
                 loadCreative(vid, img, filename);
 				break;
 			default:
 				//No extension: assume it's an image
+				nextActiveElement = img;
 				loadCreative(img, vid, filename);
 				break;
 		}
@@ -603,37 +650,28 @@ function loadCreative(elemToUse, elemToHide, filename)
 	// Chrome Apps require a workaround to load external images
 	if (chromeAppMode == true)
 	{
-		filenameForStorage = getFilenameForStorage(filename);
+		var filenameForStorage = getFilenameForStorage(filename);
 		if (filename == fallbackCreativeUrl) {
-            elemToUse.attr('src', fallbackCreativeUrl);
-            elemToUse.css('display', 'inline');
-            elemToHide.css('display', 'none');
+            nextActiveElement.attr('src', fallbackCreativeUrl);
 		}
 		else {
             // Check if we have the file available locally
             //debugWrite('Loading creative ' + filename);
             readIfFileExists(filenameForStorage, function (localFileUrl) {
                 debugWrite('Playing creative from cache');
-                elemToUse.attr('src', localFileUrl);
-                elemToUse.css('display', 'inline');
-                elemToHide.css('display', 'none');
+                nextActiveElement.attr('src', localFileUrl);
             }, function () {
                 debugWrite('Told to play a creative that was not yet downloaded. Skipping.');
                 adToPlay.duration = fallbackDurationSeconds;
                 adToPlay.isFallback = true;
-                var img = $('#myImage');
-                var vid = $('#myVideo');
-                img.attr('src', fallbackCreativeUrl);
-                img.css('display', 'inline');
-                vid.css('display', 'none');
+                nextActiveElement = getActiveImageElement();
+                nextActiveElement.attr('src', fallbackCreativeUrl);
             });
         }
 	}
 	else 
 	{
-		elemToUse.attr('src', filename);
-		elemToUse.css('display', 'inline');
-		elemToHide.css('display', 'none');
+        nextActiveElement.attr('src', filename);
 	}
 }
 
