@@ -13,8 +13,10 @@
     // Double buffering
 	var currentImageElement = 0;
 	var currentVideoElement = 0;
+    var currentHtmlElement = 0;
 	var imageElements = [$('#myImage1'), $('#myImage2')];
     var videoElements = [$('#myVideo1'), $('#myVideo2')];
+    var htmlElements = [$('#myIframe1'), $('#myIframe2')];
     var nextActiveElement = null;
 
     // Indicates if the app is running as a Chrome OS app
@@ -583,6 +585,11 @@
         return videoElements[currentVideoElement % 2];
     }
 
+    function getActiveHtmlElement()
+    {
+        return htmlElements[currentHtmlElement % 2];
+    }
+
     function bringActiveElementToFront()
 	{
 		if (nextActiveElement)
@@ -591,9 +598,11 @@
             imageElements[1].css('display', 'none');
             videoElements[0].css('display', 'none');
             videoElements[1].css('display', 'none');
+            htmlElements[0].css('display', 'none');
+            htmlElements[1].css('display', 'none');
             videoElements[0][0].pause();
             videoElements[1][0].pause();
-            nextActiveElement.css('display', 'inline');
+            nextActiveElement.css('display', 'inline-block');
             if (nextActiveElement.is('video'))
 			{
 				nextActiveElement[0].play();
@@ -619,8 +628,10 @@
 
 		currentImageElement++;
 		currentVideoElement++;
+		currentHtmlElement++;
 		var img = getActiveImageElement();
 		var vid = getActiveVideoElement();
+		var htmlElement = getActiveHtmlElement();
 
 		switch (creativeExtension)
 		{
@@ -642,6 +653,11 @@
 				nextActiveElement = vid;
                 loadCreative(vid, img, filename);
 				break;
+			case 'htm':
+			case 'html':
+                nextActiveElement = htmlElement;
+                loadHtmlCreative(filename);
+                break;
 			default:
 				//No extension: assume it's an image
 				nextActiveElement = img;
@@ -677,6 +693,21 @@ function loadCreative(elemToUse, elemToHide, filename)
 	else 
 	{
         nextActiveElement.attr('src', filename);
+	}
+}
+
+function loadHtmlCreative(filename)
+{
+	debugWrite('Playing an HTML creative');
+	if (navigator.onLine == true) {
+        nextActiveElement.attr('src', filename);
+    }
+    else {
+        debugWrite('Currently offline, cannot play an HTML element. Skipping.');
+        adToPlay.duration = fallbackDurationSeconds;
+        adToPlay.isFallback = true;
+        nextActiveElement = getActiveImageElement();
+        nextActiveElement.attr('src', fallbackCreativeUrl);
 	}
 }
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Hivestack Ad Server Client",
-  "version": "0.68",
+  "version": "0.72",
   "minimum_chrome_version": "23",
   "icons": {
     "16": "hivestack-logo16.png",
@@ -15,5 +15,5 @@
   },
   "offline_enabled": true,
   "kiosk_enabled": true,
-  "permissions": ["<all_urls>", "fullscreen", "storage", "fileSystem", "unlimitedStorage"]
+  "permissions": ["<all_urls>", "fullscreen", "storage", "fileSystem", "unlimitedStorage", "webview"]
 }
