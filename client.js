@@ -50,6 +50,7 @@
 	var offlinePlaylogs = [];
 	var currentCacheIndex = 0;
 	var creativesBeingDownloaded = {};
+	var downloadedCreativesToKeep = 100;
 
 	// ----------------------------------------------
 	//    End of settings
@@ -212,6 +213,7 @@
         });
 
 		setTimeout(prefetchCreatives, 10000); // Wait 10 seconds for playback to get started and prefetch the remaining creatives
+		setTimeout(deleteOldCreatives, 12000);
 
 		setInterval(function() { $('#queueDepth').text(adsQueue.length) }, 100);
 		refreshUI();
@@ -430,7 +432,8 @@
 	                        reportUrl: reportUrl,
 	                        duration: duration,
 	                        isFallback: false,
-							isOffline: false
+							isOffline: false,
+                            lastPlayedOnUtc: new Date().toISOString()
 						};
 
                         debugWrite('Successfully received an ad from Hivestack');
@@ -520,7 +523,8 @@
             reportUrl: null,
             duration: fallbackDurationSeconds,
             isFallback: true,
-			isOffline: true
+			isOffline: true,
+			lastPlayedOnUtc: new Date().toISOString()
 		};
 
 		adsQueue.push(fallbackSpot);
@@ -556,7 +560,8 @@
 			reportUrl: cachedCreativeMetadata.reportUrl,
 			duration: cachedCreativeMetadata.duration,
 			isFallback: false,
-			isOffline: true
+			isOffline: true,
+            lastPlayedOnUtc: new Date().toISOString()
 		};
 
         adsQueue.push(offlineSpot);
@@ -707,6 +712,38 @@ function downloadAndSaveCreativeToDisk(filename)
 
 		xhr.send();
 	});
+}
+
+function deleteOldCreatives()
+{
+    setTimeout(deleteOldCreatives, 10 * 60 * 1000); // run again in 10 minutes
+	var creativesCacheSize = Object.keys(offlineCreativesCache).length;
+
+	debugWrite('Checking if old files should be deleted. Files count: ' + creativesCacheSize + '/' + downloadedCreativesToKeep);
+	if (creativesCacheSize > downloadedCreativesToKeep)
+	{
+
+		var offlineCreativesArray = [];
+		for (var filename in offlineCreativesCache)
+		{
+			if (!offlineCreativesCache[filename].lastPlayedOnUtc)
+			{
+                offlineCreativesCache[filename].lastPlayedOnUtc = "1980-01-01T00:00:00.000Z"
+			}
+			offlineCreativesArray.push(offlineCreativesCache[filename])
+		}
+
+        offlineCreativesArray.sort(function(a, b) {return a.lastPlayedOnUtc.localeCompare(b.lastPlayedOnUtc)});
+
+		var extraCreatives = offlineCreativesArray.length - downloadedCreativesToKeep;
+		oldestCreativesToDelete = offlineCreativesArray.slice(0, extraCreatives);
+
+		debugWrite('Deleting ' + extraCreatives + ' files');
+		oldestCreativesToDelete.forEach(function(creative) {
+            deleteFile(getFilenameForStorage(creative.creativeUrl));
+			delete offlineCreativesCache[creative.creativeUrl];
+		});
+    }
 }
 
 function getFilenameForStorage(filename)

@@ -79,7 +79,7 @@ function deleteFile(filename)
 {
     fileSystem.root.getFile(filename, {create: false}, function(fileEntry) {
         fileEntry.remove(function() {
-            debugWrite('File removed.');
+            debugWrite('File ' + fileEntry.name + ' removed.');
         }, errorHandler);
 
     }, errorHandler);
