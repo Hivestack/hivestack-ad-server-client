@@ -9,6 +9,7 @@
 	var initialized = false;
     var playTimerId = null;
     var clientVersion = null;
+    var serialNumber = null;
 
     // Double buffering
 	var currentImageElement = 0;
@@ -212,6 +213,20 @@
             clientVersion = json['version'];
             $('#clientName').text(json['name']);
             $('#clientVersion').text(json['version']);
+            if (chrome.enterprise && chrome.enterprise.deviceAttributes && chrome.enterprise.deviceAttributes.getDeviceSerialNumber)
+			{
+                chrome.enterprise.deviceAttributes.getDeviceSerialNumber(function(serial) {
+                	if (!serial || serial == "")
+					{
+						serial = "<unavailable>";
+					}
+					else
+					{
+						serialNumber = serial;
+					}
+                    $('#clientVersion').text($('#clientVersion').text() + ' (SN: ' + serial + ')');
+				});
+			}
         });
 
 		setTimeout(prefetchCreatives, 10000); // Wait 10 seconds for playback to get started and prefetch the remaining creatives
